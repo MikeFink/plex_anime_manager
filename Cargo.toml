@@ -1,0 +1,12 @@
+[package]
+name = "plex-anime-manager"
+version = "0.1.0"
+authors = ["Mike Fink <mfink92@gmail.com>"]
+edition = "2021"
+publish = false
+
+[workspace]
+members = [".", "app", "entity", "migration", "service"]
+
+[dependencies]
+plex-amime-manager-app = { path = "app" }

@@ -1,0 +1,5 @@
+.env
+.cargo
+**/target/
+Cargo.lock
+.idea/
