@@ -11,6 +11,10 @@ use service::{
     sea_orm::{Database, DatabaseConnection},
     Mutation as MutationCore, Query as QueryCore,
 };
+use tower_http::{
+    services::ServeDir,
+    trace::{self, TraceLayer}
+};
 use entity::plex_event;
 use flash::{get_flash_cookie, post_response, PostResponse};
 use migration::{Migrator, MigratorTrait};
@@ -18,20 +22,20 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use tera::Tera;
 use tower_cookies::{CookieManagerLayer, Cookies};
-use tower_http::services::ServeDir;
+use tower_http::decompression::DecompressionLayer;
+use tracing::{info, Level};
+use axum_typed_multipart::{TryFromMultipart, TypedMultipart};
 
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
     env::set_var("RUST_LOG", "debug");
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().with_target(false).json().init();
 
     dotenv::dotenv().ok();
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL is not set in .env file");
     let host = env::var("HOST").expect("HOST is not set in .env file");
     let port = env::var("PORT").expect("PORT is not set in .env file");
 
-    let host = "localhost";
-    let port = "3000";
     let server_url = format!("{host}:{port}");
 
     let conn = Database::connect(db_url)
@@ -44,7 +48,10 @@ async fn start() -> anyhow::Result<()> {
 
     let state = AppState { templates, conn };
 
-    let app = Router::new()
+    let webhook_route = Router::new()
+        .route("/events", post(new_plex_event));
+
+    let form_routes = Router::new()
         .route("/", get(list_posts).post(create_post))
         .route("/:id", get(edit_post).post(update_post))
         .route("/new", get(new_post))
@@ -61,13 +68,37 @@ async fn start() -> anyhow::Result<()> {
                     format!("Unhandled internal error: {error}"),
                 )
             }),
-        )
+        );
+
+    let app = Router::new()
+        .nest("/plex", webhook_route)
+        .nest("/", form_routes)
         .layer(CookieManagerLayer::new())
+        .layer(DecompressionLayer::new())
+        .layer(TraceLayer::new_for_http()
+                   .make_span_with(trace::DefaultMakeSpan::new()
+                       .level(Level::INFO))
+                   .on_response(trace::DefaultOnResponse::new()
+                       .level(Level::INFO)),)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&server_url).await.unwrap();
-    axum::serve(listener, app).await?;
+    info!("listening on: {}", listener.local_addr()?);
 
+    axum::serve(listener, app.into_make_service()).await?;
+
+    Ok(())
+}
+
+#[derive(TryFromMultipart, Deserialize, Debug)]
+struct PlexEventRequest {
+    payload: String,
+}
+
+async fn new_plex_event(
+    data: TypedMultipart<PlexEventRequest>,
+) -> Result<(), (StatusCode, &'static str)> {
+    println!("Request Body: {:?}", data.payload);
     Ok(())
 }
 
@@ -182,7 +213,7 @@ async fn update_post(
 
     let data = FlashData {
         kind: "success".to_owned(),
-        message: "Post succcessfully updated".to_owned(),
+        message: "Post successfully updated".to_owned(),
     };
 
     Ok(post_response(&mut cookies, data))
