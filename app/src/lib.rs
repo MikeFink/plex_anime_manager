@@ -52,7 +52,7 @@ async fn start() -> anyhow::Result<()> {
         .route("/events", post(new_plex_event));
 
     let form_routes = Router::new()
-        .route("/", get(list_posts).post(create_post))
+        .route("/", get(list_posts).post(create_event))
         .route("/:id", get(edit_post).post(update_post))
         .route("/new", get(new_post))
         .route("/delete/:id", post(delete_post))
@@ -160,14 +160,14 @@ async fn new_post(state: State<AppState>) -> Result<Html<String>, (StatusCode, &
     Ok(Html(body))
 }
 
-async fn create_post(
+async fn create_event(
     state: State<AppState>,
     mut cookies: Cookies,
     form: Form<plex_event::Model>,
 ) -> Result<PostResponse, (StatusCode, &'static str)> {
     let form = form.0;
 
-    MutationCore::create_post(&state.conn, form)
+    MutationCore::create_event(&state.conn, form)
         .await
         .expect("could not insert post");
 
