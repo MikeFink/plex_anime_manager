@@ -4,7 +4,7 @@ use sea_orm::*;
 pub struct Mutation;
 
 impl Mutation {
-    pub async fn create_post(
+    pub async fn create_event(
         db: &DbConn,
         form_data: plex_event::Model,
     ) -> Result<plex_event::ActiveModel, DbErr> {

@@ -9,19 +9,19 @@ async fn main() {
     let db = &prepare_mock_db();
 
     {
-        let post = Query::find_post_by_id(db, 1).await.unwrap().unwrap();
+        let post = Query::find_event_by_id(db, 1).await.unwrap().unwrap();
 
         assert_eq!(post.id, 1);
     }
 
     {
-        let post = Query::find_post_by_id(db, 5).await.unwrap().unwrap();
+        let post = Query::find_event_by_id(db, 5).await.unwrap().unwrap();
 
         assert_eq!(post.id, 5);
     }
 
     {
-        let plex_event = Mutation::create_post(
+        let plex_event = Mutation::create_event(
             db,
             plex_event::Model {
                 id: 0,
@@ -41,7 +41,7 @@ async fn main() {
     }
 
     {
-        let plex_event = Mutation::update_post_by_id(
+        let plex_event = Mutation::update_event_by_id(
             db,
             1,
             plex_event::Model {
@@ -62,13 +62,13 @@ async fn main() {
     }
 
     {
-        let result = Mutation::delete_post(db, 5).await.unwrap();
+        let result = Mutation::delete_event(db, 5).await.unwrap();
 
         assert_eq!(result.rows_affected, 1);
     }
 
     {
-        let result = Mutation::delete_all_posts(db).await.unwrap();
+        let result = Mutation::delete_all_events(db).await.unwrap();
 
         assert_eq!(result.rows_affected, 5);
     }
