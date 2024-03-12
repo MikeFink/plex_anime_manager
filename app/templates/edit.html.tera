@@ -1,16 +1,16 @@
 {% extends "layout.html.tera" %} {% block content %}
 <div class="row">
-  <h4>Edit Post</h4>
+  <h4>Edit Anime</h4>
   <div class="twelve columns">
     <div class="ten columns">
-      <form action="/{{ post.id }}" method="post">
+      <form action="/{{ anime.id }}" method="post">
         <div class="twelve columns">
           <input
             type="text"
             placeholder="title"
             name="title"
             id="title"
-            value="{{ post.title }}"
+            value="{{ anime.title }}"
             autofocus
             class="u-full-width"
           />
@@ -23,15 +23,15 @@
           </div>
           <div class="eight columns"></div>
           <div class="two columns">
-            <input type="submit" value="save post" />
+            <input type="submit" value="save anime" />
           </div>
         </div>
       </form>
     </div>
     <div class="two columns">
-      <form action="/delete/{{ post.id }}" method="post">
+      <form action="/delete/{{ anime.id }}" method="post">
         <div class="two columns">
-          <input id="delete-button" type="submit" value="delete post" />
+          <input id="delete-button" type="submit" value="delete anime" />
         </div>
       </form>
     </div>

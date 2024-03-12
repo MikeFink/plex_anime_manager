@@ -9,31 +9,42 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(PlexEvents::Table)
+                    .table(Anime::Table)
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(PlexEvents::Id)
+                        ColumnDef::new(Anime::Id)
                             .integer()
                             .not_null()
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(PlexEvents::Title).string().not_null())
-                    .to_owned(),
+                    .col(ColumnDef::new(Anime::Title)
+                        .string()
+                        .not_null())
+                    .col(ColumnDef::new(Anime::AgentId)
+                        .integer()
+                        .not_null())
+                    .to_owned()
+                    .col(ColumnDef::new(Anime::ExternalId)
+                        .integer()
+                        .not_null())
+                        .to_owned(),
             )
             .await
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
-            .drop_table(Table::drop().table(PlexEvents::Table).to_owned())
+            .drop_table(Table::drop().table(Anime::Table).to_owned())
             .await
     }
 }
 
 #[derive(DeriveIden)]
-enum PlexEvents {
+pub enum Anime {
     Table,
     Id,
     Title,
+    AgentId,
+    ExternalId
 }

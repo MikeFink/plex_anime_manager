@@ -58,11 +58,11 @@ button.small {
   margin: 0 2.5px;
 }
 
-.post:hover {
+.record:hover {
   background-color: #bce2ee;
 }
 
-.post td {
+.record td {
   padding: 5px;
   width: 150px;
 }

@@ -1,7 +1,7 @@
 mod flash;
 
 use axum::{
-    extract::{Form, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Html,
     routing::{get, get_service, post},
@@ -15,8 +15,8 @@ use tower_http::{
     services::ServeDir,
     trace::{self, TraceLayer}
 };
-use entity::plex_event;
-use flash::{get_flash_cookie, post_response, PostResponse};
+use entity::anime;
+use flash::get_flash_cookie;
 use migration::{Migrator, MigratorTrait};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -25,6 +25,7 @@ use tower_cookies::{CookieManagerLayer, Cookies};
 use tower_http::decompression::DecompressionLayer;
 use tracing::{info, Level};
 use axum_typed_multipart::{TryFromMultipart, TypedMultipart};
+use regex::Regex;
 
 #[tokio::main]
 async fn start() -> anyhow::Result<()> {
@@ -52,10 +53,8 @@ async fn start() -> anyhow::Result<()> {
         .route("/events", post(new_plex_event));
 
     let form_routes = Router::new()
-        .route("/", get(list_posts).post(create_event))
-        .route("/:id", get(edit_post).post(update_post))
-        .route("/new", get(new_post))
-        .route("/delete/:id", post(delete_post))
+        .route("/", get(list_anime))
+        .route("/:id", get(edit_anime))
         .nest_service(
             "/static",
             get_service(ServeDir::new(concat!(
@@ -92,13 +91,58 @@ async fn start() -> anyhow::Result<()> {
 
 #[derive(TryFromMultipart, Deserialize, Debug)]
 struct PlexEventRequest {
-    payload: String,
+    payload: String
+}
+
+#[derive(Deserialize, Debug)]
+struct PlexEventPayload {
+    event: String,
+    #[serde(rename="Metadata")]
+    metadata: PlexEventPayloadMetadata
+}
+
+#[derive(Deserialize, Debug)]
+struct PlexEventPayloadMetadata {
+    year: i32,
+    guid: String,
+    #[serde(rename="grandparentTitle")]
+    grantparent_title: String,
+    index: i32,
+    #[serde(rename="parentIndex")]
+    parent_index: i32
 }
 
 async fn new_plex_event(
+    state: State<AppState>,
     data: TypedMultipart<PlexEventRequest>,
 ) -> Result<(), (StatusCode, &'static str)> {
-    println!("Request Body: {:?}", data.payload);
+    let p: PlexEventPayload = serde_json::from_str(&*data.payload).unwrap();
+    println!("Event: {:?}", p.event);
+
+    if p.event == "media.scrobble" {
+        println!("Event: {:?}", p.metadata);
+        let agent_source = p.metadata.guid.as_str();
+        let re = Regex::new(r#"-([0-9]+)"#).unwrap();
+        let agent_id = match agent_source {
+            s if s.contains("anidb") => 1,
+            s if s.contains("tvdb") => 2,
+            _ => 0,
+        };
+
+        if let Some(number) = re.captures(agent_source).and_then(|captures| captures.get(1)) {
+            let external_id = number.as_str().parse::<i32>().unwrap();
+            println!("{}", external_id);
+
+            let anime = MutationCore::find_or_create_anime(&state.conn, p.metadata.grantparent_title, agent_id, external_id)
+                .await
+                .expect("could not find or create anime");
+
+            MutationCore::create_event(&state.conn, p.metadata.index, p.metadata.parent_index, anime.id)
+                .await
+                .expect("could not insert webhook event");
+        }
+    }
+
     Ok(())
 }
 
@@ -111,7 +155,7 @@ struct AppState {
 #[derive(Deserialize)]
 struct Params {
     page: Option<u64>,
-    posts_per_page: Option<u64>,
+    anime_per_page: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -120,22 +164,22 @@ struct FlashData {
     message: String,
 }
 
-async fn list_posts(
+async fn list_anime(
     state: State<AppState>,
     Query(params): Query<Params>,
     cookies: Cookies,
 ) -> Result<Html<String>, (StatusCode, &'static str)> {
     let page = params.page.unwrap_or(1);
-    let posts_per_page = params.posts_per_page.unwrap_or(5);
+    let anime_per_page = params.anime_per_page.unwrap_or(5);
 
-    let (posts, num_pages) = QueryCore::find_events_in_page(&state.conn, page, posts_per_page)
+    let (anime, num_pages) = QueryCore::find_anime_in_page(&state.conn, page, anime_per_page)
         .await
-        .expect("Cannot find posts in page");
+        .expect("Cannot find anime in page");
 
     let mut ctx = tera::Context::new();
-    ctx.insert("posts", &posts);
+    ctx.insert("anime", &anime);
     ctx.insert("page", &page);
-    ctx.insert("posts_per_page", &posts_per_page);
+    ctx.insert("anime_per_page", &anime_per_page);
     ctx.insert("num_pages", &num_pages);
 
     if let Some(value) = get_flash_cookie::<FlashData>(&cookies) {
@@ -150,46 +194,17 @@ async fn list_posts(
     Ok(Html(body))
 }
 
-async fn new_post(state: State<AppState>) -> Result<Html<String>, (StatusCode, &'static str)> {
-    let ctx = tera::Context::new();
-    let body = state
-        .templates
-        .render("new.html.tera", &ctx)
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Template error"))?;
-
-    Ok(Html(body))
-}
-
-async fn create_event(
-    state: State<AppState>,
-    mut cookies: Cookies,
-    form: Form<plex_event::Model>,
-) -> Result<PostResponse, (StatusCode, &'static str)> {
-    let form = form.0;
-
-    MutationCore::create_event(&state.conn, form)
-        .await
-        .expect("could not insert post");
-
-    let data = FlashData {
-        kind: "success".to_owned(),
-        message: "Post succcessfully added".to_owned(),
-    };
-
-    Ok(post_response(&mut cookies, data))
-}
-
-async fn edit_post(
+async fn edit_anime(
     state: State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<Html<String>, (StatusCode, &'static str)> {
-    let post: plex_event::Model = QueryCore::find_event_by_id(&state.conn, id)
+    let anime: anime::Model = QueryCore::find_anime_by_id(&state.conn, id)
         .await
-        .expect("could not find post")
-        .unwrap_or_else(|| panic!("could not find post with id {id}"));
+        .expect("could not find anime")
+        .unwrap_or_else(|| panic!("could not find anime with id {id}"));
 
     let mut ctx = tera::Context::new();
-    ctx.insert("post", &post);
+    ctx.insert("anime", &anime);
 
     let body = state
         .templates
@@ -197,43 +212,6 @@ async fn edit_post(
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Template error"))?;
 
     Ok(Html(body))
-}
-
-async fn update_post(
-    state: State<AppState>,
-    Path(id): Path<i32>,
-    mut cookies: Cookies,
-    form: Form<plex_event::Model>,
-) -> Result<PostResponse, (StatusCode, String)> {
-    let form = form.0;
-
-    MutationCore::update_event_by_id(&state.conn, id, form)
-        .await
-        .expect("could not edit post");
-
-    let data = FlashData {
-        kind: "success".to_owned(),
-        message: "Post successfully updated".to_owned(),
-    };
-
-    Ok(post_response(&mut cookies, data))
-}
-
-async fn delete_post(
-    state: State<AppState>,
-    Path(id): Path<i32>,
-    mut cookies: Cookies,
-) -> Result<PostResponse, (StatusCode, &'static str)> {
-    MutationCore::delete_event(&state.conn, id)
-        .await
-        .expect("could not delete post");
-
-    let data = FlashData {
-        kind: "success".to_owned(),
-        message: "Post succcessfully deleted".to_owned(),
-    };
-
-    Ok(post_response(&mut cookies, data))
 }
 
 pub fn main() {
